@@ -1,0 +1,9 @@
+version: '3.7'
+
+services:
+  etcd:
+    image: bitnami/etcd:3.4.16
+    environment:
+      ALLOW_NONE_AUTHENTICATION: 'yes'
+    ports:
+      - 2379:2379
