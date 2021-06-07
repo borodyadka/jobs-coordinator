@@ -28,19 +28,19 @@ func (suite *EtcdTestSuite) SetupSuite() {
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
-		panic(err)
+		suite.T().Fatal(err)
 	}
 }
 
 func (suite *EtcdTestSuite) TearDownSuite() {
 	if err := suite.etcd.Close(); err != nil {
-		panic(err)
+		suite.T().Fatal(err)
 	}
 }
 
 func (suite *EtcdTestSuite) TearDownTest() {
 	if _, err := suite.etcd.Delete(context.Background(), "/", clientv3.WithPrefix()); err != nil {
-		panic(err)
+		suite.T().Fatal(err)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	coordinator "github.com/borodyadka/jobs-coordinator"
-	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
@@ -72,7 +71,7 @@ func (s *Storage) CreateJob(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := resp.Responses[0].Response.(*etcdserverpb.ResponseOp_ResponseRange); ok {
+	if resp.Responses[0].GetResponseRange() != nil {
 		return coordinator.ErrJobAlreadyExists
 	}
 	return nil
