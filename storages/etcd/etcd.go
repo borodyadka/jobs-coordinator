@@ -187,6 +187,7 @@ func (s *Storage) AcquireByName(ctx context.Context, name string) (coordinator.J
 	}
 	mutex := concurrency.NewMutex(sess, key)
 	if err := mutex.Lock(ctx); err != nil {
+		_ = sess.Close()
 		return nil, err
 	}
 
@@ -205,6 +206,7 @@ func (s *Storage) TryAcquireByName(ctx context.Context, name string) (coordinato
 	}
 	mutex := concurrency.NewMutex(sess, key)
 	if err := mutex.TryLock(ctx); err != nil {
+		_ = sess.Close()
 		if err == concurrency.ErrLocked {
 			return nil, coordinator.ErrJobTaken
 		}

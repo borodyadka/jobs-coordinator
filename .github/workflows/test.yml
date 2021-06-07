@@ -21,6 +21,5 @@ jobs:
       env:
         ETCD_HOST: etcd:2379
       run: |
-        env
         go mod vendor
         go test ./...
