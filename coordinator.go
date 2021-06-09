@@ -9,6 +9,8 @@ type JobEventType int8
 const (
 	JobEventTypeAdded JobEventType = iota
 	JobEventTypeRemoved
+	JobEventTypeLocked
+	JobEventTypeUnlocked
 )
 
 type JobEvent struct {
@@ -20,6 +22,16 @@ type Job interface {
 	Name() string
 	Release(ctx context.Context) error
 	Done() <-chan struct{}
+}
+
+type Storage interface {
+	CreateJob(ctx context.Context, name string) error
+	DestroyJob(ctx context.Context, name string) error
+	ListJobs(ctx context.Context) ([]string, error)
+	TryAcquire(ctx context.Context) (Job, error)
+	AcquireByName(ctx context.Context, name string) (Job, error)
+	TryAcquireByName(ctx context.Context, name string) (Job, error)
+	WatchJobs(ctx context.Context) (<-chan JobEvent, error)
 }
 
 type Options struct {

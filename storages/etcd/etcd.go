@@ -217,32 +217,59 @@ func (s *Storage) TryAcquireByName(ctx context.Context, name string) (coordinato
 func (s *Storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, error) {
 	var changes clientv3.WatchChan
 	events := make(chan coordinator.JobEvent)
+	jobsPrefix := s.opts.Prefix + jobsSuffix
+	locksPrefix := s.opts.Prefix + locksSuffix
 	go func() {
 		defer close(events)
+
 		for {
 			if changes == nil {
-				changes = s.etcd.Watch(ctx, s.opts.Prefix+jobsSuffix, clientv3.WithPrefix())
-			}
-			res := <-changes
-			for i := range res.Events {
-				var typ coordinator.JobEventType
-				if res.Events[i].Type == clientv3.EventTypePut {
-					typ = coordinator.JobEventTypeAdded
-				} else {
-					typ = coordinator.JobEventTypeRemoved
-				}
-				events <- coordinator.JobEvent{
-					Key:  strings.TrimPrefix(string(res.Events[i].Kv.Key), s.opts.Prefix+jobsSuffix),
-					Type: typ,
-				}
+				changes = s.etcd.Watch(ctx, s.opts.Prefix, clientv3.WithPrefix())
 			}
 
-			if res.Canceled {
-				if res.Err() == context.Canceled {
-					break
-				} else {
-					changes = nil
+			select {
+			case res := <-changes:
+				for i := range res.Events {
+					key := string(res.Events[i].Kv.Key)
+					var typ coordinator.JobEventType
+
+					if key[0:len(jobsPrefix)] == jobsPrefix {
+						if res.Events[i].Type == clientv3.EventTypePut {
+							typ = coordinator.JobEventTypeAdded
+						} else {
+							typ = coordinator.JobEventTypeRemoved
+						}
+
+						events <- coordinator.JobEvent{
+							Key:  strings.TrimPrefix(key, jobsPrefix),
+							Type: typ,
+						}
+					} else if key[0:len(locksPrefix)] == locksPrefix {
+						if res.Events[i].Type == clientv3.EventTypePut {
+							typ = coordinator.JobEventTypeLocked
+						} else {
+							typ = coordinator.JobEventTypeUnlocked
+						}
+						// we need to cut etcd-specific mutex suffix
+						key := strings.TrimPrefix(key, locksPrefix)
+						idx := strings.LastIndex(key, "/")
+
+						events <- coordinator.JobEvent{
+							Key:  key[0:idx],
+							Type: typ,
+						}
+					}
 				}
+				if res.Canceled {
+					if res.Err() == context.Canceled {
+						break
+					} else {
+						// TODO: maybe better errors handling?
+						changes = nil
+					}
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()

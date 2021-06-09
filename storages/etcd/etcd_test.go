@@ -207,3 +207,58 @@ func (suite *EtcdTestSuite) TestWatchJobs() {
 func TestWatchJobs(t *testing.T) {
 	suite.Run(t, new(EtcdTestSuite))
 }
+
+func (suite *EtcdTestSuite) TestWatchLocks() {
+	ch := make(chan struct{})
+	storage := getStorage(suite.etcd)
+	go func() {
+		jch, err := storage.WatchJobs(context.Background())
+		assert.NoError(suite.T(), err)
+		ch <- struct{}{}
+
+		ev1 := <-jch
+		assert.Equal(suite.T(), coordinator.JobEventTypeAdded, ev1.Type)
+		assert.Equal(suite.T(), "TestWatchLocks", ev1.Key)
+
+		ev2 := <-jch
+		assert.Equal(suite.T(), coordinator.JobEventTypeLocked, ev2.Type)
+		assert.Equal(suite.T(), "TestWatchLocks", ev2.Key)
+
+		ev3 := <-jch
+		assert.Equal(suite.T(), coordinator.JobEventTypeUnlocked, ev3.Type)
+		assert.Equal(suite.T(), "TestWatchLocks", ev3.Key)
+		ch <- struct{}{}
+	}()
+	<-ch
+	err := storage.CreateJob(context.Background(), "TestWatchLocks")
+	assert.NoError(suite.T(), err)
+
+	job, err := storage.AcquireByName(context.Background(), "TestWatchLocks")
+	assert.NoError(suite.T(), err)
+
+	err = job.Release(context.Background())
+	assert.NoError(suite.T(), err)
+	<-ch
+}
+
+func TestWatchLocks(t *testing.T) {
+	suite.Run(t, new(EtcdTestSuite))
+}
+
+func (suite *EtcdTestSuite) TestWatchCancel() {
+	ch := make(chan struct{})
+	storage := getStorage(suite.etcd)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		c, err := storage.WatchJobs(ctx)
+		assert.NoError(suite.T(), err)
+		<-c
+		ch <- struct{}{}
+	}()
+	cancel()
+	<-ch
+}
+
+func TestWatchCancel(t *testing.T) {
+	suite.Run(t, new(EtcdTestSuite))
+}
