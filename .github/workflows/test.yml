@@ -17,9 +17,15 @@ jobs:
         go-version: 1.16.x
     - name: Checkout code
       uses: actions/checkout@v2
+    - name: Vendor
+      run: |
+        go mod vendor
     - name: Test
+      run: |
+        go test -mod vendor -cover .
+    - name: Test etcd
       env:
         ETCD_HOST: etcd:2379
       run: |
-        go mod vendor
-        go test ./...
+        cd storages/etcd
+        go test -mod vendor -cover .
