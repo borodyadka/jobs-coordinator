@@ -58,12 +58,12 @@ type Options struct {
 	Prefix string
 }
 
-type Storage struct {
+type storage struct {
 	etcd *clientv3.Client
 	opts Options
 }
 
-func (s *Storage) CreateJob(ctx context.Context, name string) error {
+func (s *storage) CreateJob(ctx context.Context, name string) error {
 	key := s.opts.Prefix + jobsSuffix + name
 
 	cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
@@ -77,7 +77,7 @@ func (s *Storage) CreateJob(ctx context.Context, name string) error {
 	return nil
 }
 
-func (s *Storage) DestroyJob(ctx context.Context, name string) error {
+func (s *storage) DestroyJob(ctx context.Context, name string) error {
 	key := s.opts.Prefix + jobsSuffix + name
 	_, err := s.etcd.Delete(ctx, key)
 	if err != nil {
@@ -86,7 +86,7 @@ func (s *Storage) DestroyJob(ctx context.Context, name string) error {
 	return nil
 }
 
-func (s *Storage) ListJobs(ctx context.Context) ([]string, error) {
+func (s *storage) ListJobs(ctx context.Context) ([]string, error) {
 	resp, err := s.etcd.Get(
 		ctx,
 		s.opts.Prefix+jobsSuffix,
@@ -104,7 +104,7 @@ func (s *Storage) ListJobs(ctx context.Context) ([]string, error) {
 	return result, nil
 }
 
-func (s *Storage) listLocks(ctx context.Context) ([]string, error) {
+func (s *storage) listLocks(ctx context.Context) ([]string, error) {
 	resp, err := s.etcd.Get(
 		ctx,
 		s.opts.Prefix+locksSuffix,
@@ -121,7 +121,7 @@ func (s *Storage) listLocks(ctx context.Context) ([]string, error) {
 	return result, nil
 }
 
-func (s *Storage) listAvailable(ctx context.Context) ([]string, error) {
+func (s *storage) listAvailable(ctx context.Context) ([]string, error) {
 	all, err := s.ListJobs(ctx)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ outer:
 	return available, nil
 }
 
-func (s *Storage) TryAcquire(ctx context.Context) (coordinator.Job, error) {
+func (s *storage) TryAcquire(ctx context.Context) (coordinator.Job, error) {
 	available, err := s.listAvailable(ctx)
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func (s *Storage) TryAcquire(ctx context.Context) (coordinator.Job, error) {
 	return nil, nil
 }
 
-func (s *Storage) checkJobExists(ctx context.Context, name string) error {
+func (s *storage) checkJobExists(ctx context.Context, name string) error {
 	resp, err := s.etcd.Get(ctx, s.opts.Prefix+jobsSuffix+name, clientv3.WithKeysOnly())
 	if err != nil {
 		return err
@@ -174,7 +174,7 @@ func (s *Storage) checkJobExists(ctx context.Context, name string) error {
 	return nil
 }
 
-func (s *Storage) AcquireByName(ctx context.Context, name string) (coordinator.Job, error) {
+func (s *storage) AcquireByName(ctx context.Context, name string) (coordinator.Job, error) {
 	if err := s.checkJobExists(ctx, name); err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (s *Storage) AcquireByName(ctx context.Context, name string) (coordinator.J
 	return newJob(name, mutex, sess), nil
 }
 
-func (s *Storage) TryAcquireByName(ctx context.Context, name string) (coordinator.Job, error) {
+func (s *storage) TryAcquireByName(ctx context.Context, name string) (coordinator.Job, error) {
 	if err := s.checkJobExists(ctx, name); err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func (s *Storage) TryAcquireByName(ctx context.Context, name string) (coordinato
 	return newJob(name, mutex, sess), nil
 }
 
-func (s *Storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, error) {
+func (s *storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, error) {
 	var changes clientv3.WatchChan
 	events := make(chan coordinator.JobEvent)
 	jobsPrefix := s.opts.Prefix + jobsSuffix
@@ -276,8 +276,8 @@ func (s *Storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, e
 	return events, nil
 }
 
-func NewWithClient(etcd *clientv3.Client, opts Options) *Storage {
-	return &Storage{
+func NewWithClient(etcd *clientv3.Client, opts Options) *storage {
+	return &storage{
 		etcd: etcd,
 		opts: opts,
 	}

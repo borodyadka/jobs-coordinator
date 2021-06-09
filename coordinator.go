@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"sync"
 )
 
 type JobEventType int8
@@ -35,44 +36,129 @@ type Storage interface {
 }
 
 type Options struct {
+	// do not release destroyed jobs
+	NoAutoRelease bool
 }
 
-type Coordinator struct {
+type Coordinator interface {
+	CreateJob(ctx context.Context, name string) error
+	DestroyJob(ctx context.Context, name string) error
+	ListJobNames(ctx context.Context) ([]string, error)
+	TryAcquireJob(ctx context.Context) (Job, error)
+	AcquireJobByName(ctx context.Context, name string) (Job, error)
+	TryAcquireJobByName(ctx context.Context, name string) (Job, error)
+	WatchJobs(ctx context.Context) (<-chan JobEvent, error)
+	Shutdown(ctx context.Context) error
+}
+
+type coordinator struct {
 	storage Storage
 	options Options
+	lock    sync.Mutex
+	jobs    sync.Map
+	ctx     context.Context
+	stop    context.CancelFunc
+	watcher <-chan JobEvent
 }
 
-func (c *Coordinator) CreateJob(ctx context.Context, name string) error {
+func (c *coordinator) CreateJob(ctx context.Context, name string) error {
 	return c.storage.CreateJob(ctx, name)
 }
 
-func (c *Coordinator) DestroyJob(ctx context.Context, name string) error {
+func (c *coordinator) DestroyJob(ctx context.Context, name string) error {
 	return c.storage.DestroyJob(ctx, name)
 }
 
-func (c *Coordinator) ListJobNames(ctx context.Context) ([]string, error) {
+func (c *coordinator) ListJobNames(ctx context.Context) ([]string, error) {
 	return c.storage.ListJobs(ctx)
 }
 
-func (c *Coordinator) TryAcquireJob(ctx context.Context) (Job, error) {
-	return c.storage.TryAcquire(ctx)
+func (c *coordinator) TryAcquireJob(ctx context.Context) (Job, error) {
+	job, err := c.storage.TryAcquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.jobs.Store(job.Name(), job)
+	c.ensureReleaseWatcher()
+	return job, nil
 }
 
-func (c *Coordinator) AcquireJobByName(ctx context.Context, name string) (Job, error) {
-	return c.storage.AcquireByName(ctx, name)
+func (c *coordinator) AcquireJobByName(ctx context.Context, name string) (Job, error) {
+	job, err := c.storage.AcquireByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	c.jobs.Store(job.Name(), job)
+	c.ensureReleaseWatcher()
+	return job, nil
 }
 
-func (c *Coordinator) TryAcquireJobByName(ctx context.Context, name string) (Job, error) {
-	return c.storage.TryAcquireByName(ctx, name)
+func (c *coordinator) TryAcquireJobByName(ctx context.Context, name string) (Job, error) {
+	job, err := c.storage.TryAcquireByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	c.jobs.Store(job.Name(), job)
+	c.ensureReleaseWatcher()
+	return job, nil
 }
 
-func (c *Coordinator) WatchJobs(ctx context.Context) (<-chan JobEvent, error) {
+func (c *coordinator) WatchJobs(ctx context.Context) (<-chan JobEvent, error) {
 	return c.storage.WatchJobs(ctx)
 }
 
-func New(storage Storage, options Options) *Coordinator {
-	return &Coordinator{
+func (c *coordinator) ensureReleaseWatcher() {
+	if c.options.NoAutoRelease {
+		// we don't need to release destroyed jobs
+		return
+	}
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if c.watcher == nil {
+		var err error
+		c.watcher, err = c.storage.WatchJobs(c.ctx)
+		if err != nil {
+			// TODO: handle error
+			return
+		}
+		go c.watchEvents()
+	}
+}
+
+func (c *coordinator) watchEvents() {
+	for {
+		select {
+		case <-c.ctx.Done():
+			c.watcher = nil
+			break
+		case ev := <-c.watcher:
+			if ev.Type == JobEventTypeRemoved || ev.Type == JobEventTypeUnlocked {
+				if j, ok := c.jobs.LoadAndDelete(ev.Key); ok {
+					_ = j.(Job).Release(context.Background()) // TODO: handle error
+				}
+			}
+		}
+	}
+}
+
+func (c *coordinator) Shutdown(ctx context.Context) error {
+	c.stop()
+	c.lock.Lock()
+	c.jobs.Range(func(key, value interface{}) bool {
+		_ = value.(Job).Release(ctx)
+		return true
+	})
+	defer c.lock.Unlock()
+	return nil
+}
+
+func New(storage Storage, options Options) Coordinator {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &coordinator{
 		storage: storage,
 		options: options,
+		ctx:     ctx,
+		stop:    cancel,
+		// TODO: logger
 	}
 }

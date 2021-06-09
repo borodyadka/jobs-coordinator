@@ -1,6 +1,7 @@
-.PHONY: test test_etcd
+.PHONY: test
+test:
+	go test -mod vendor -cover .
 
-test: test_etcd
-
-test_etcd:
+.PHONY: test-storages
+test-storages:
 	$(MAKE) -C storages/etcd test

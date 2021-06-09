@@ -12,7 +12,7 @@ import (
 	"go.etcd.io/etcd/client/v3"
 )
 
-func getStorage(client *clientv3.Client) *Storage {
+func getStorage(client *clientv3.Client) *storage {
 	return NewWithClient(client, Options{Prefix: "/test"})
 }
 
