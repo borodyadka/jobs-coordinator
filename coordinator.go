@@ -78,8 +78,10 @@ func (c *coordinator) TryAcquireJob(ctx context.Context) (Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.jobs.Store(job.Name(), job)
-	c.ensureReleaseWatcher()
+	if job != nil {
+		c.jobs.Store(job.Name(), job)
+		c.ensureReleaseWatcher()
+	}
 	return job, nil
 }
 
@@ -88,8 +90,10 @@ func (c *coordinator) AcquireJobByName(ctx context.Context, name string) (Job, e
 	if err != nil {
 		return nil, err
 	}
-	c.jobs.Store(job.Name(), job)
-	c.ensureReleaseWatcher()
+	if job != nil {
+		c.jobs.Store(job.Name(), job)
+		c.ensureReleaseWatcher()
+	}
 	return job, nil
 }
 
@@ -98,8 +102,10 @@ func (c *coordinator) TryAcquireJobByName(ctx context.Context, name string) (Job
 	if err != nil {
 		return nil, err
 	}
-	c.jobs.Store(job.Name(), job)
-	c.ensureReleaseWatcher()
+	if job != nil {
+		c.jobs.Store(job.Name(), job)
+		c.ensureReleaseWatcher()
+	}
 	return job, nil
 }
 
@@ -145,7 +151,7 @@ func (c *coordinator) Shutdown(ctx context.Context) error {
 	c.stop()
 	c.lock.Lock()
 	c.jobs.Range(func(key, value interface{}) bool {
-		_ = value.(Job).Release(ctx)
+		_ = value.(Job).Release(ctx) // TODO: handle error
 		return true
 	})
 	defer c.lock.Unlock()
