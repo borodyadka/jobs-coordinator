@@ -15,13 +15,15 @@ const (
 )
 
 type JobEvent struct {
-	Key  string
-	Type JobEventType
+	Key      string
+	Revision string
+	Type     JobEventType
 }
 
 type Job interface {
 	Name() string
 	Release(ctx context.Context) error
+	Revision() string
 	Done() <-chan struct{}
 }
 
@@ -140,7 +142,10 @@ func (c *coordinator) watchEvents() {
 		case ev := <-c.watcher:
 			if ev.Type == JobEventTypeRemoved || ev.Type == JobEventTypeUnlocked {
 				if j, ok := c.jobs.LoadAndDelete(ev.Key); ok {
-					_ = j.(Job).Release(context.Background()) // TODO: handle error
+					j := j.(Job)
+					if j.Revision() == ev.Revision {
+						_ = j.Release(context.Background()) // TODO: handle error
+					}
 				}
 			}
 		}

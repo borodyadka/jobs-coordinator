@@ -41,6 +41,10 @@ func (j *job) Release(ctx context.Context) error {
 	return nil
 }
 
+func (j *job) Revision() string {
+	return j.mutex.Key()
+}
+
 func (j *job) Done() <-chan struct{} {
 	return j.donec
 }
@@ -255,8 +259,9 @@ func (s *storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, e
 						idx := strings.LastIndex(key, "/")
 
 						events <- coordinator.JobEvent{
-							Key:  key[0:idx],
-							Type: typ,
+							Key:      key[0:idx],
+							Revision: key[idx:],
+							Type:     typ,
 						}
 					}
 				}
