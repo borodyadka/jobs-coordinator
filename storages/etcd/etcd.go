@@ -9,11 +9,6 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
-const (
-	jobsSuffix  = "/jobs/"
-	locksSuffix = "/locks/"
-)
-
 type job struct {
 	name     string
 	mutex    *concurrency.Mutex
@@ -59,7 +54,7 @@ func newJob(name string, mutex *concurrency.Mutex, sess *concurrency.Session) *j
 }
 
 type Options struct {
-	Prefix string
+	JobPrefix, LockPrefix string
 }
 
 type storage struct {
@@ -68,7 +63,7 @@ type storage struct {
 }
 
 func (s *storage) CreateJob(ctx context.Context, name string) error {
-	key := s.opts.Prefix + jobsSuffix + name
+	key := s.opts.JobPrefix + name
 
 	cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 	resp, err := s.etcd.Txn(ctx).If(cmp).Then(clientv3.OpPut(key, "")).Else(clientv3.OpGet(key)).Commit()
@@ -82,7 +77,7 @@ func (s *storage) CreateJob(ctx context.Context, name string) error {
 }
 
 func (s *storage) DestroyJob(ctx context.Context, name string) error {
-	key := s.opts.Prefix + jobsSuffix + name
+	key := s.opts.JobPrefix + name
 	_, err := s.etcd.Delete(ctx, key)
 	if err != nil {
 		return err
@@ -93,7 +88,7 @@ func (s *storage) DestroyJob(ctx context.Context, name string) error {
 func (s *storage) ListJobs(ctx context.Context) ([]string, error) {
 	resp, err := s.etcd.Get(
 		ctx,
-		s.opts.Prefix+jobsSuffix,
+		s.opts.JobPrefix,
 		clientv3.WithPrefix(),
 		clientv3.WithKeysOnly(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
@@ -103,7 +98,7 @@ func (s *storage) ListJobs(ctx context.Context) ([]string, error) {
 	}
 	result := make([]string, 0, len(resp.Kvs))
 	for _, ev := range resp.Kvs {
-		result = append(result, strings.TrimPrefix(string(ev.Key), s.opts.Prefix+jobsSuffix))
+		result = append(result, strings.TrimPrefix(string(ev.Key), s.opts.JobPrefix))
 	}
 	return result, nil
 }
@@ -111,7 +106,7 @@ func (s *storage) ListJobs(ctx context.Context) ([]string, error) {
 func (s *storage) listLocks(ctx context.Context) ([]string, error) {
 	resp, err := s.etcd.Get(
 		ctx,
-		s.opts.Prefix+locksSuffix,
+		s.opts.LockPrefix,
 		clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
 	)
@@ -120,7 +115,7 @@ func (s *storage) listLocks(ctx context.Context) ([]string, error) {
 	}
 	result := make([]string, 0, len(resp.Kvs))
 	for _, ev := range resp.Kvs {
-		result = append(result, strings.TrimPrefix(string(ev.Key), s.opts.Prefix+locksSuffix))
+		result = append(result, strings.TrimPrefix(string(ev.Key), s.opts.LockPrefix))
 	}
 	return result, nil
 }
@@ -168,7 +163,7 @@ func (s *storage) TryAcquire(ctx context.Context) (coordinator.Job, error) {
 }
 
 func (s *storage) checkJobExists(ctx context.Context, name string) error {
-	resp, err := s.etcd.Get(ctx, s.opts.Prefix+jobsSuffix+name, clientv3.WithKeysOnly())
+	resp, err := s.etcd.Get(ctx, s.opts.JobPrefix+name, clientv3.WithKeysOnly())
 	if err != nil {
 		return err
 	}
@@ -183,7 +178,7 @@ func (s *storage) AcquireByName(ctx context.Context, name string) (coordinator.J
 		return nil, err
 	}
 
-	key := s.opts.Prefix + locksSuffix + name
+	key := s.opts.LockPrefix + name
 	sess, err := concurrency.NewSession(s.etcd)
 	if err != nil {
 		return nil, err
@@ -202,7 +197,7 @@ func (s *storage) TryAcquireByName(ctx context.Context, name string) (coordinato
 		return nil, err
 	}
 
-	key := s.opts.Prefix + locksSuffix + name
+	key := s.opts.LockPrefix + name
 	sess, err := concurrency.NewSession(s.etcd)
 	if err != nil {
 		return nil, err
@@ -219,20 +214,23 @@ func (s *storage) TryAcquireByName(ctx context.Context, name string) (coordinato
 }
 
 func (s *storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, error) {
-	var changes clientv3.WatchChan
+	var jobsWatch, locksWatch clientv3.WatchChan
 	events := make(chan coordinator.JobEvent)
-	jobsPrefix := s.opts.Prefix + jobsSuffix
-	locksPrefix := s.opts.Prefix + locksSuffix
+	jobsPrefix := s.opts.JobPrefix
+	locksPrefix := s.opts.LockPrefix
 	go func() {
 		defer close(events)
 
 		for {
-			if changes == nil {
-				changes = s.etcd.Watch(ctx, s.opts.Prefix, clientv3.WithPrefix())
+			if jobsWatch == nil {
+				jobsWatch = s.etcd.Watch(ctx, s.opts.JobPrefix, clientv3.WithPrefix())
+			}
+			if locksWatch == nil {
+				locksWatch = s.etcd.Watch(ctx, s.opts.LockPrefix, clientv3.WithPrefix())
 			}
 
 			select {
-			case res := <-changes:
+			case res := <-jobsWatch:
 				for i := range res.Events {
 					key := string(res.Events[i].Kv.Key)
 					var typ coordinator.JobEventType
@@ -248,7 +246,21 @@ func (s *storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, e
 							Key:  strings.TrimPrefix(key, jobsPrefix),
 							Type: typ,
 						}
-					} else if key[0:len(locksPrefix)] == locksPrefix {
+					}
+				}
+				if res.Canceled {
+					if res.Err() == context.Canceled {
+						break
+					} else {
+						// TODO: maybe better errors handling?
+						jobsWatch = nil
+					}
+				}
+			case res := <-locksWatch:
+				for i := range res.Events {
+					key := string(res.Events[i].Kv.Key)
+					var typ coordinator.JobEventType
+					if key[0:len(locksPrefix)] == locksPrefix {
 						if res.Events[i].Type == clientv3.EventTypePut {
 							typ = coordinator.JobEventTypeLocked
 						} else {
@@ -264,13 +276,14 @@ func (s *storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, e
 							Type:     typ,
 						}
 					}
+
 				}
 				if res.Canceled {
 					if res.Err() == context.Canceled {
 						break
 					} else {
 						// TODO: maybe better errors handling?
-						changes = nil
+						locksWatch = nil
 					}
 				}
 			case <-ctx.Done():
@@ -282,6 +295,13 @@ func (s *storage) WatchJobs(ctx context.Context) (<-chan coordinator.JobEvent, e
 }
 
 func NewWithClient(etcd *clientv3.Client, opts Options) *storage {
+	if opts.JobPrefix[len(opts.JobPrefix)-1] != '/' {
+		panic("option JobPrefix must end with '/'")
+	}
+	if opts.LockPrefix[len(opts.LockPrefix)-1] != '/' {
+		panic("option LockPrefix must end with '/'")
+	}
+
 	return &storage{
 		etcd: etcd,
 		opts: opts,

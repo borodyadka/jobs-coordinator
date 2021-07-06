@@ -13,7 +13,10 @@ import (
 )
 
 func getStorage(client *clientv3.Client) *storage {
-	return NewWithClient(client, Options{Prefix: "/test"})
+	return NewWithClient(client, Options{
+		JobPrefix: "/jobs/",
+		LockPrefix: "/locks/",
+	})
 }
 
 type EtcdTestSuite struct {
@@ -49,9 +52,9 @@ func (suite *EtcdTestSuite) TestCreateJob() {
 	err := storage.CreateJob(context.Background(), "TestCreateJob")
 	assert.NoError(suite.T(), err)
 
-	resp, err := suite.etcd.Get(context.Background(), "/test"+jobsSuffix+"TestCreateJob")
+	resp, err := suite.etcd.Get(context.Background(), "/jobs/TestCreateJob")
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), "/test"+jobsSuffix+"TestCreateJob", string(resp.Kvs[0].Key))
+	assert.Equal(suite.T(), "/jobs/TestCreateJob", string(resp.Kvs[0].Key))
 	assert.Less(suite.T(), int64(0), resp.Kvs[0].CreateRevision)
 }
 
@@ -67,7 +70,7 @@ func (suite *EtcdTestSuite) TestDestroyJob() {
 	err = storage.DestroyJob(context.Background(), "TestDestroyJob")
 	assert.NoError(suite.T(), err)
 
-	resp, err := suite.etcd.Get(context.Background(), "/test"+jobsSuffix+"TestDestroyJob")
+	resp, err := suite.etcd.Get(context.Background(), "/jobs/TestDestroyJob")
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), 0, len(resp.Kvs))
 }
